@@ -1,0 +1,102 @@
+version: '3.9'
+
+services:
+  # ── Frontend ────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ../meterflow-web
+      dockerfile: Dockerfile
+    ports:
+      - '5173:80'
+    environment:
+      - VITE_API_URL=http://localhost:3000
+    depends_on:
+      - api
+    networks:
+      - meterflow
+    restart: unless-stopped
+
+  # ── Backend API ─────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    command: npx tsx watch src/index.ts
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      MONGO_URI: mongodb://mongo:27017/meterflow
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: dev_access_secret_must_be_at_least_32_chars_long
+      JWT_REFRESH_SECRET: dev_refresh_secret_must_be_at_least_32_chars_long
+      ENCRYPTION_KEY: dev_encryption_key_must_be_32_chars_long_minimum_xx
+      APP_URL: http://localhost:5173
+      API_URL: http://localhost:3000
+      SMTP_HOST: smtp.ethereal.email
+      SMTP_PORT: '587'
+      EMAIL_FROM: noreply@meterflow.dev
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - meterflow
+    restart: unless-stopped
+
+  # ── MongoDB ─────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - meterflow
+
+  # ── Redis ────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - meterflow
+
+  # ── Nginx edge (production-like local routing) ───────────────────────
+  nginx:
+    image: nginx:alpine
+    ports:
+      - '80:80'
+    volumes:
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - web
+    networks:
+      - meterflow
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  meterflow:
+    driver: bridge
